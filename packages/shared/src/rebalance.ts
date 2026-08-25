@@ -110,8 +110,13 @@ export function calculateRebalance(input: RebalanceInput): RebalanceResult {
     units: s.price ? Math.abs(s.diff) / s.price : null,
   }));
 
-  // Step 9: cash raised from sells is what funds the buys.
-  const cashAvailableForBuys = sellOrders.reduce((sum, o) => sum + o.value, 0);
+  // Step 9: cash raised from sells funds the buys, plus any cash the account
+  // already holds in excess of its target (cash isn't itself tradeable, so
+  // it never appears as a SELL order - but a surplus is still spendable cash).
+  const cashSurplus = diffs
+    .filter((d) => d.isCash && d.diff < 0)
+    .reduce((sum, d) => sum + Math.abs(d.diff), 0);
+  const cashAvailableForBuys = sellOrders.reduce((sum, o) => sum + o.value, 0) + cashSurplus;
 
   // Steps 10-11: buys share the available cash proportionally to their diff.
   const buys = diffs.filter((d) => d.diff > 0 && !d.isCash);

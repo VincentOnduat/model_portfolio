@@ -60,10 +60,14 @@ describe('calculateRebalance', () => {
   });
 
   it('applies de-minimis so tiny drifts do not generate orders', () => {
+    // With cash and equityA as the only two holdings, total value = 1000.
+    // Target: cash 0 (100% equityA), so equityA's target is 1000 but it's
+    // only holding 997 - a $3 drift, comfortably inside the $5 de-minimis
+    // band, so neither asset should generate an order.
     const result = calculateRebalance({
       holdings: [
-        { assetId: 'cash', quantity: 0, price: null, isCash: true },
-        { assetId: 'equityA', quantity: 999, price: 1 },
+        { assetId: 'cash', quantity: 3, price: null, isCash: true },
+        { assetId: 'equityA', quantity: 997, price: 1 },
       ],
       modelAllocations: [
         { assetId: 'cash', percentAllocated: 0 },
