@@ -1,4 +1,5 @@
 import {
+  AccountType,
   AllocationListStatus,
   AllocationListType,
   AssetSector,
@@ -22,6 +23,14 @@ export interface Firm {
   isThirdParty: boolean;
 }
 
+/** A signed contract permitting the owner firm to share models with the third party firm. */
+export interface FirmContract {
+  id: string;
+  ownerFirmId: string;
+  thirdPartyFirmId: string;
+  signedAt: string;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -39,6 +48,8 @@ export interface Asset {
   /** True for the single synthetic "cash" asset every model carries. */
   isCash: boolean;
   lastPrice: number | null;
+  isTradeable: boolean;
+  isRestricted: boolean;
 }
 
 export interface ModelAsset {
@@ -63,6 +74,8 @@ export interface ModelSummary {
   ownerUserId: string;
   createdAt: string;
   updatedAt: string;
+  /** Empty means any account type is eligible to attach - guide 4.1.4 suitability. */
+  eligibleAccountTypes: AccountType[];
 }
 
 export interface ModelDetail extends ModelSummary {
@@ -87,6 +100,15 @@ export interface ClientAccount {
   availableCash: number;
   cashAccountBalance: number;
   lastRebalanceDate: string | null;
+  accountType: AccountType;
+  hasConsent: boolean;
+  /**
+   * Present only when the list was fetched with a `modelId` filter - whether
+   * this account could be attached to that specific model right now, and why
+   * not (see `isAccountEligibleForModel` in validation.ts).
+   */
+  eligible?: boolean;
+  ineligibleReason?: string;
 }
 
 export interface SharingGrant {

@@ -3,6 +3,8 @@
  * (fast inline feedback), so the two never drift apart.
  */
 
+import type { AccountType } from './enums.js';
+
 export const ALLOCATION_TOTAL_TARGET = 100;
 /** Floating point tolerance when comparing summed percentages to 100. */
 export const ALLOCATION_TOLERANCE = 0.005;
@@ -66,4 +68,43 @@ export const MAX_CHARGE_PERCENT = 10;
 
 export function isValidChargePercent(chargePercent: number): boolean {
   return chargePercent >= 0 && chargePercent <= MAX_CHARGE_PERCENT;
+}
+
+export interface AccountEligibilityInput {
+  hasConsent: boolean;
+  accountType: AccountType;
+}
+
+export interface ModelEligibilityInput {
+  /** Empty means "no restriction" - any account type is eligible. */
+  eligibleAccountTypes: AccountType[];
+}
+
+export interface AccountEligibilityResult {
+  eligible: boolean;
+  reason?: string;
+}
+
+/**
+ * Guide 4.1.4: an account can only be attached to a model when the client
+ * has given consent AND the account's wrapper type is one the model
+ * accepts (an empty `eligibleAccountTypes` on the model means "any type").
+ * Checked both server-side (the enforcement point, in
+ * clientAccounts.routes.ts) and client-side (to grey out ineligible rows
+ * before a round-trip, in ClientAccountsTab.tsx).
+ */
+export function isAccountEligibleForModel(
+  account: AccountEligibilityInput,
+  model: ModelEligibilityInput,
+): AccountEligibilityResult {
+  if (!account.hasConsent) {
+    return { eligible: false, reason: 'Client has not given consent for this account.' };
+  }
+  if (model.eligibleAccountTypes.length > 0 && !model.eligibleAccountTypes.includes(account.accountType)) {
+    return {
+      eligible: false,
+      reason: `This model only accepts ${model.eligibleAccountTypes.join('/')} accounts.`,
+    };
+  }
+  return { eligible: true };
 }

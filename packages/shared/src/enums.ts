@@ -111,6 +111,15 @@ export const AssetSector = asConst({
 });
 export type AssetSector = (typeof AssetSector)[keyof typeof AssetSector];
 
+/** Account wrapper type (guide 4.1.4), checked against a model's `eligibleAccountTypes`. */
+export const AccountType = asConst({
+  ISA: 'ISA',
+  GIA: 'GIA',
+  SIPP: 'SIPP',
+  OTHER: 'OTHER',
+});
+export type AccountType = (typeof AccountType)[keyof typeof AccountType];
+
 /**
  * The three sharing scopes described in guide 4.1.5:
  *  - FIRM: sharing within the model owner's own firm (default or bespoke permissions)

@@ -76,6 +76,15 @@ enum SharingScope {
   THIRD_PARTY
 }
 
+/// Account wrapper type (guide 4.1.4) - used to check a client account's
+/// suitability against a model's `eligibleAccountTypes`.
+enum AccountType {
+  ISA
+  GIA
+  SIPP
+  OTHER
+}
+
 enum SharingKind {
   DEFAULT
   BESPOKE
@@ -145,8 +154,25 @@ model Firm {
   ownedModels    Model[]           @relation("ModelOwnerFirm")
   clientAccounts ClientAccount[]
   sharesReceived SharingGrant[]    @relation("SharingGrantFirm")
+  contractsAsOwner      FirmContract[] @relation("FirmContractOwner")
+  contractsAsThirdParty FirmContract[] @relation("FirmContractThirdParty")
 
   @@index([parentFirmId])
+}
+
+/// A signed contract permitting `ownerFirm` to create THIRD_PARTY sharing
+/// grants targeting `thirdPartyFirm` (guide 4.1.5: "restricting Third Party
+/// grants to firms with a signed contract"). Directed, not a bare boolean on
+/// Firm, because a contract is between two specific firms, not a global flag.
+model FirmContract {
+  id              String   @id @default(uuid())
+  ownerFirmId     String
+  ownerFirm       Firm     @relation("FirmContractOwner", fields: [ownerFirmId], references: [id])
+  thirdPartyFirmId String
+  thirdPartyFirm  Firm     @relation("FirmContractThirdParty", fields: [thirdPartyFirmId], references: [id])
+  signedAt        DateTime @default(now())
+
+  @@unique([ownerFirmId, thirdPartyFirmId])
 }
 
 model User {
@@ -182,6 +208,10 @@ model Asset {
   sector    AssetSector
   isCash    Boolean     @default(false)
   lastPrice Decimal?    @db.Decimal(18, 6)
+  /// Guide 4.2.5 ExclusionReason.ASSET_NOT_TRADEABLE - excluded from new buy orders when false.
+  isTradeable Boolean   @default(true)
+  /// Guide 4.2.5/4.2.6 RESTRICTED_ASSET / RESTRICTED_ASSET_CANNOT_SELL - blocks both new buys and sells.
+  isRestricted Boolean  @default(false)
 
   modelAssets    ModelAsset[]
   orderLines     OrderLine[]
@@ -205,6 +235,9 @@ model Model {
   vatIncluded       Boolean?
   aim               ModelAim       @default(NOT_SPECIFIED)
   risk              ModelRisk      @default(NOT_SPECIFIED)
+  /// Guide 4.1.4 account-type suitability: which AccountTypes may attach to
+  /// this model. Empty = no restriction (any account type is eligible).
+  eligibleAccountTypes AccountType[] @default([])
 
   ownerFirmId String
   ownerFirm   Firm   @relation("ModelOwnerFirm", fields: [ownerFirmId], references: [id])
@@ -262,6 +295,10 @@ model ClientAccount {
   cashAccountBalance Decimal   @default(0) @db.Decimal(18, 2)
   lastRebalanceDate  DateTime?
   createdAt          DateTime  @default(now())
+  /// Guide 4.1.4 account-type/model suitability check.
+  accountType        AccountType @default(OTHER)
+  /// Guide 4.1.4 client-consent gating - must be true to attach to a model.
+  hasConsent         Boolean     @default(true)
 
   allocationListAccounts AllocationListAccount[]
   orderLines             OrderLine[]
