@@ -1,4 +1,4 @@
-# Model Portfolio
+11# Model Portfolio
 
 A model-portfolio management platform: create investment models, allocate
 assets to a target percentage, attach client accounts, share models across
@@ -135,4 +135,4 @@ and pull request once it's on GitHub.
 
 ## License
 
-[MIT](./LICENSE)
+Proprietary - all rights reserved. See [`LICENSE`](./LICENSE).
