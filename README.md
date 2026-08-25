@@ -17,14 +17,18 @@ together.
 - **Model Management** (create, edit, lock/unlock, delete, asset allocation
   with the "must sum to 100%" rule, Draft -> Live publishing) - fully working
   end to end, backend and frontend.
-- **Client Accounts**: list/search/attach/detach to a model.
+- **Client Accounts**: list/search/attach/detach to a model, with real
+  client-consent and account-type/model-suitability gating - ineligible
+  accounts are greyed out in the UI and rejected server-side.
 - **Sharing**: Firm / Enterprise / Third-Party permission grants (read +
-  create/revoke; org-hierarchy and contract-based restrictions are stubbed -
-  see `docs/domain-model.md`).
+  create/revoke), including the Enterprise org-hierarchy walk and the
+  Third-Party signed-contract restriction - see `docs/domain-model.md`.
 - **Money Allocation / Rebalance**: the actual calculation engines from the
   guide (an 11-step rebalance algorithm, and buy-only money allocation),
-  plus the 3-step Select Accounts -> Generate Orders -> Confirm Orders
-  workflow, wired end to end against seeded demo data.
+  the 3-step Select Accounts -> Generate Orders -> Confirm Orders workflow,
+  and real Exclusions/Failures for the reasons this schema can ground
+  (non-tradeable/restricted/no-price assets, missing consent, zero orders
+  generated) - wired end to end against seeded demo data.
 - Role-based access control across six user roles, JWT auth, and a Postgres
   schema covering the full domain (see `apps/backend/prisma/schema.prisma`).
 
@@ -84,7 +88,12 @@ All seeded users share the password `Password123!`:
 The seed also creates a "Balanced Growth" model with one client account
 whose holdings are deliberately drifted from the model's target allocation -
 use it to try Money Allocation / Rebalance -> Create New List -> Rebalance
-end to end.
+end to end. A few other seeded records demo the newer gating/enforcement:
+two more client accounts that show up greyed-out on Balanced Growth's
+"Client Accounts" tab (one wrong account type, one no consent), an
+Enterprise + a Third-Party sharing grant already in place, and a separate
+"Exclusions Demo" model/account that produces real Exclusion rows when you
+run Money Allocation on it.
 
 ## Common scripts
 
