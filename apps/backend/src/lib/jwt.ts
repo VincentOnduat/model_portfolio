@@ -9,7 +9,11 @@ export interface AuthTokenPayload {
 }
 
 export function signAuthToken(payload: AuthTokenPayload): string {
-  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN });
+  // env.JWT_EXPIRES_IN is a free-form config string (e.g. "12h"); jsonwebtoken's
+  // types want its branded StringValue type, which can't be verified statically
+  // from a plain string, hence the cast.
+  const options: jwt.SignOptions = { expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] };
+  return jwt.sign(payload, env.JWT_SECRET, options);
 }
 
 export function verifyAuthToken(token: string): AuthTokenPayload {

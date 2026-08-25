@@ -17,7 +17,12 @@
  * structurally compatible for free.
  */
 
-function asConst<T extends Record<string, string>>(obj: T): T {
+// The `const` modifier (TS 5.0+) is load-bearing here: without it, generic
+// inference from an object-literal argument widens each property's value to
+// `string`, which defeats the whole point of this helper (every "enum" below
+// would silently type as `string` instead of a literal union - exactly the
+// bug this comment block above is warning against).
+function asConst<const T extends Record<string, string>>(obj: T): T {
   return obj;
 }
 
