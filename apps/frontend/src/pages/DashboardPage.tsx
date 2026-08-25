@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/useAuth';
 
 /** Guide 3 "Dashboard": thumbnails linking to Model Management and Money Allocation/Rebalance. */
 export function DashboardPage() {

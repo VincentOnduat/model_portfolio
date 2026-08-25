@@ -1,23 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { Role } from '@model-portfolio/shared';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api, setToken, getToken } from '../api/client';
-
-interface CurrentUser {
-  id: string;
-  email: string;
-  displayName: string;
-  role: Role;
-  firmId: string;
-}
-
-interface AuthContextValue {
-  user: CurrentUser | null;
-  loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
-}
-
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+import { AuthContext, type CurrentUser } from './auth-context';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
@@ -47,10 +30,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within an AuthProvider');
-  return ctx;
 }
