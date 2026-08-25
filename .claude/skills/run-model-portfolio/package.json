@@ -1,0 +1,10 @@
+{
+  "name": "run-model-portfolio-driver",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Playwright REPL driver for the run-model-portfolio skill. Not part of the app's own dependency graph - installed standalone here.",
+  "type": "module",
+  "dependencies": {
+    "playwright": "1.62.1"
+  }
+}
