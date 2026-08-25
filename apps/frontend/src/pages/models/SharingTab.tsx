@@ -16,6 +16,11 @@ interface SharingGrantRow {
   allowOnwardShare: boolean;
 }
 
+interface EligibleGrantee {
+  id: string;
+  name: string;
+}
+
 const SCOPE_LABEL: Record<SharingScope, string> = {
   [SharingScope.FIRM]: "My Firm's Permission",
   [SharingScope.ENTERPRISE]: 'Enterprise Permission',
@@ -39,6 +44,15 @@ export function SharingTab({ model }: { model: ModelDetail }) {
   const { data: grants } = useQuery({
     queryKey: ['sharing', model.id, scope],
     queryFn: () => api.get<SharingGrantRow[]>(`/models/${model.id}/sharing?scope=${scope}`),
+  });
+
+  // Guide 4.1.5: only offer grantees this grant could actually target for
+  // the selected scope (descendant firms for Enterprise, contracted firms
+  // for Third Party, firm users for Firm) - the API enforces the same
+  // restriction, this just avoids a round-trip 422 for an ineligible pick.
+  const { data: eligibleGrantees } = useQuery({
+    queryKey: ['sharing', model.id, 'eligible-grantees', scope],
+    queryFn: () => api.get<EligibleGrantee[]>(`/models/${model.id}/sharing/eligible-grantees?scope=${scope}`),
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['sharing', model.id] });
@@ -69,7 +83,10 @@ export function SharingTab({ model }: { model: ModelDetail }) {
         {Object.values(SharingScope).map((s) => (
           <button
             key={s}
-            onClick={() => setScope(s)}
+            onClick={() => {
+              setScope(s);
+              setGranteeId('');
+            }}
             className={`rounded-full px-3 py-1 text-sm ${
               scope === s ? 'bg-brand-500 text-white' : 'border border-slate-200 bg-white text-slate-600'
             }`}
@@ -126,14 +143,33 @@ export function SharingTab({ model }: { model: ModelDetail }) {
         <div className="flex flex-wrap items-end gap-4">
           <label className="text-sm">
             <span className="mb-1 block text-slate-600">
-              {scope === SharingScope.FIRM ? 'User ID' : 'Firm ID'}
+              {scope === SharingScope.FIRM
+                ? 'User'
+                : scope === SharingScope.ENTERPRISE
+                  ? 'Firm (below yours in the org chart)'
+                  : 'Firm (with a signed contract)'}
             </span>
-            <input
+            <select
               value={granteeId}
               onChange={(e) => setGranteeId(e.target.value)}
               className="w-64 rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder="uuid"
-            />
+            >
+              <option value="">Select...</option>
+              {eligibleGrantees?.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+            {eligibleGrantees?.length === 0 && (
+              <p className="mt-1 text-xs text-slate-400">
+                {scope === SharingScope.ENTERPRISE
+                  ? 'No firms below yours in the org chart.'
+                  : scope === SharingScope.THIRD_PARTY
+                    ? 'No firms with a signed contract yet.'
+                    : 'No users found.'}
+              </p>
+            )}
           </label>
           {(
             [

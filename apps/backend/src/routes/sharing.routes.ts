@@ -4,6 +4,7 @@ import { Permission, SharingScope, SharingKind } from '@model-portfolio/shared';
 import { requireAuth, requirePermission } from '../middleware/auth.js';
 import { asyncHandler, ApiException } from '../middleware/errorHandler.js';
 import { assertCanEditModel } from '../services/models.service.js';
+import { isDescendantFirm, hasSignedContract, getDescendantFirms, getContractedThirdPartyFirms } from '../services/firms.service.js';
 import { prisma } from '../lib/prisma.js';
 
 /**
@@ -11,9 +12,9 @@ import { prisma } from '../lib/prisma.js';
  * Mounted at /api/models/:modelId/sharing - mergeParams so :modelId from the
  * parent path is visible here.
  *
- * Reads are fully implemented; granting/revoking a share is stubbed with the
- * permission shape validated (so the frontend can be built against a stable
- * contract) but not yet persisted - see TODO below.
+ * Fully implemented: reads, grant create/revoke, and the Enterprise
+ * hierarchy-walk / Third-Party contract restrictions (packages/shared's
+ * SharingScope enum, enforced via services/firms.service.ts).
  */
 export const sharingRouter = Router({ mergeParams: true });
 
@@ -64,10 +65,11 @@ const grantSchema = z.object({
   allowOnwardShare: z.boolean().default(false),
 });
 
-// TODO(#future): full implementation needs to walk the Enterprise firm
-// hierarchy (share only "down", per guide 4.1.5) and check Third Party
-// grants only target firms with a signed contract. Both require org-chart
-// and contract data this scaffold's seed doesn't model yet.
+/**
+ * Guide 4.1.5: Enterprise grants may only target a firm below the model
+ * owner's firm in the org chart; Third Party grants may only target a firm
+ * the model owner's firm has a signed contract with.
+ */
 sharingRouter.post(
   '/',
   requirePermission(Permission.SHARE_MY_FIRM),
@@ -93,8 +95,67 @@ sharingRouter.post(
       throw new ApiException(422, 'INVALID_GRANT', 'Bespoke firm grants require granteeUserId.');
     }
 
+    const model = await prisma.model.findUnique({ where: { id: modelId }, select: { ownerFirmId: true } });
+    if (!model) {
+      throw new ApiException(404, 'MODEL_NOT_FOUND', `No model with id ${modelId}.`);
+    }
+
+    if (input.scope === SharingScope.ENTERPRISE && input.granteeFirmId) {
+      const isDescendant = await isDescendantFirm(input.granteeFirmId, model.ownerFirmId);
+      if (!isDescendant) {
+        throw new ApiException(
+          422,
+          'INVALID_GRANT',
+          'Enterprise grants may only target a firm below yours in the org chart (guide 4.1.5).',
+        );
+      }
+    }
+    if (input.scope === SharingScope.THIRD_PARTY && input.granteeFirmId) {
+      const contracted = await hasSignedContract(model.ownerFirmId, input.granteeFirmId);
+      if (!contracted) {
+        throw new ApiException(
+          422,
+          'INVALID_GRANT',
+          'Third-Party grants may only target a firm with a signed contract (guide 4.1.5).',
+        );
+      }
+    }
+
     const grant = await prisma.sharingGrant.create({ data: { modelId, ...input } });
     res.status(201).json(grant);
+  }),
+);
+
+/**
+ * Guide 4.1.5: which firms/users a grant could actually target for the
+ * given scope, so the frontend can offer a picker instead of a raw UUID
+ * field the caller has to guess and get rejected on.
+ */
+const eligibleGranteesQuerySchema = z.object({ scope: z.nativeEnum(SharingScope) });
+
+sharingRouter.get(
+  '/eligible-grantees',
+  asyncHandler(async (req, res) => {
+    const { modelId } = req.params as { modelId: string };
+    const { scope } = eligibleGranteesQuerySchema.parse(req.query);
+
+    const model = await prisma.model.findUnique({ where: { id: modelId }, select: { ownerFirmId: true } });
+    if (!model) {
+      throw new ApiException(404, 'MODEL_NOT_FOUND', `No model with id ${modelId}.`);
+    }
+
+    if (scope === SharingScope.FIRM) {
+      const users = await prisma.user.findMany({
+        where: { firmId: model.ownerFirmId },
+        select: { id: true, displayName: true },
+        orderBy: { displayName: 'asc' },
+      });
+      res.json(users.map((u) => ({ id: u.id, name: u.displayName })));
+    } else if (scope === SharingScope.ENTERPRISE) {
+      res.json(await getDescendantFirms(model.ownerFirmId));
+    } else {
+      res.json(await getContractedThirdPartyFirms(model.ownerFirmId));
+    }
   }),
 );
 
