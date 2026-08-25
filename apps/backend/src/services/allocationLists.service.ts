@@ -3,6 +3,8 @@ import {
   AllocationListType,
   calculateMoneyAllocation,
   calculateRebalance,
+  type ExclusionReason,
+  type FailureReason,
 } from '@model-portfolio/shared';
 import { prisma } from '../lib/prisma.js';
 import { ApiException } from '../middleware/errorHandler.js';
@@ -146,6 +148,30 @@ export async function createAllocationList(user: AuthTokenPayload, input: Create
   return serializeAllocationList(list);
 }
 
+interface OrderLineDraft {
+  accountId: string;
+  assetId: string;
+  side: 'BUY' | 'SELL';
+  units: number | null;
+  value: number;
+  lastPrice: number | null;
+  belowMinTrade: boolean;
+}
+
+interface ExclusionDraft {
+  accountId?: string;
+  assetId?: string;
+  reason: ExclusionReason;
+  detail: string;
+}
+
+interface FailureDraft {
+  accountId?: string;
+  assetId?: string;
+  reason: FailureReason;
+  detail: string;
+}
+
 /**
  * Guide 4.2.3/4.2.4 Step 2: Generate Orders. Runs the pure calculation
  * engines from packages/shared against each account's model allocation
@@ -153,6 +179,17 @@ export async function createAllocationList(user: AuthTokenPayload, input: Create
  * Orders below the model's minimum trade value are kept (flagged
  * belowMinTrade) rather than dropped, per guide: "it is listed on the
  * detailed confirmation list but will not be placed or executed."
+ *
+ * Guide 4.2.5/4.2.6 Exclusions/Failures: this implements the subset of the
+ * ~20 named reasons that's grounded in data this schema actually has (an
+ * account's consent/attachment, an asset's price/tradeable/restricted
+ * flags) - see docs/domain-model.md for which reasons are covered and
+ * which remain stubbed pending real specs for the rest (CREST status,
+ * deal-status workflows, charges setup, etc.). Money Allocation only ever
+ * produces BUY orders, so its asset-level issues are recorded as
+ * Exclusions (packages/shared's buy-oriented ExclusionReason values);
+ * Rebalance produces both BUY and SELL, so its asset-level issues use the
+ * richer, dealing-oriented FailureReason values instead.
  */
 export async function generateOrders(user: AuthTokenPayload, listId: string) {
   const list = await getAllocationListOrThrow(listId);
@@ -163,17 +200,31 @@ export async function generateOrders(user: AuthTokenPayload, listId: string) {
     throw new ApiException(422, 'NO_ACCOUNTS', 'Attach at least one client account before generating orders.');
   }
 
-  const orderLinesToCreate: {
-    accountId: string;
-    assetId: string;
-    side: 'BUY' | 'SELL';
-    units: number | null;
-    value: number;
-    lastPrice: number | null;
-    belowMinTrade: boolean;
-  }[] = [];
+  const orderLinesToCreate: OrderLineDraft[] = [];
+  const exclusionsToCreate: ExclusionDraft[] = [];
+  const failuresToCreate: FailureDraft[] = [];
 
   for (const listAccount of list.accounts) {
+    // Re-check account-level eligibility at generation time - the account
+    // could have been detached from its model, or had consent withdrawn,
+    // since it was added to this list.
+    if (listAccount.account.linkedModelId !== listAccount.modelId) {
+      exclusionsToCreate.push({
+        accountId: listAccount.accountId,
+        reason: 'ACCOUNT_NOT_ATTACHED_TO_MODEL',
+        detail: `Account ${listAccount.account.accountNumber} is no longer attached to this model.`,
+      });
+      continue;
+    }
+    if (!listAccount.account.hasConsent) {
+      exclusionsToCreate.push({
+        accountId: listAccount.accountId,
+        reason: 'CLIENT_DOCUMENTATION_INCOMPLETE',
+        detail: `Account ${listAccount.account.accountNumber}'s client has not given consent.`,
+      });
+      continue;
+    }
+
     const model = await prisma.model.findUnique({
       where: { id: listAccount.modelId },
       include: { assets: { include: { asset: true } } },
@@ -197,7 +248,34 @@ export async function generateOrders(user: AuthTokenPayload, listId: string) {
 
       for (const o of orders) {
         const asset = model.assets.find((ma) => ma.assetId === o.assetId)!.asset;
+        if (!asset.isTradeable) {
+          exclusionsToCreate.push({
+            accountId: listAccount.accountId,
+            assetId: asset.id,
+            reason: 'ASSET_NOT_TRADEABLE',
+            detail: `${asset.name} is not currently tradeable.`,
+          });
+          continue;
+        }
+        if (asset.isRestricted) {
+          exclusionsToCreate.push({
+            accountId: listAccount.accountId,
+            assetId: asset.id,
+            reason: 'RESTRICTED_ASSET',
+            detail: `${asset.name} is a restricted asset and cannot be bought.`,
+          });
+          continue;
+        }
         const price = asset.lastPrice == null ? null : Number(asset.lastPrice);
+        if (price == null && !asset.isCash) {
+          exclusionsToCreate.push({
+            accountId: listAccount.accountId,
+            assetId: asset.id,
+            reason: 'NO_PRICE_AVAILABLE',
+            detail: `No price is available for ${asset.name}.`,
+          });
+          continue;
+        }
         orderLinesToCreate.push({
           accountId: listAccount.accountId,
           assetId: o.assetId,
@@ -231,24 +309,62 @@ export async function generateOrders(user: AuthTokenPayload, listId: string) {
 
       for (const o of result.orders) {
         const asset = model.assets.find((ma) => ma.assetId === o.assetId)?.asset;
+        const price = asset?.lastPrice == null ? null : Number(asset.lastPrice);
+        if (asset?.isRestricted && o.side === 'SELL') {
+          failuresToCreate.push({
+            accountId: listAccount.accountId,
+            assetId: o.assetId,
+            reason: 'RESTRICTED_ASSET_CANNOT_SELL',
+            detail: `${asset.name} is restricted and cannot be sold.`,
+          });
+          continue;
+        }
+        if (price == null && !asset?.isCash) {
+          failuresToCreate.push({
+            accountId: listAccount.accountId,
+            assetId: o.assetId,
+            reason: 'NO_PRICE_FOR_ASSET',
+            detail: `No price is available for ${asset?.name ?? o.assetId}.`,
+          });
+          continue;
+        }
         orderLinesToCreate.push({
           accountId: listAccount.accountId,
           assetId: o.assetId,
           side: o.side,
           value: o.value,
           units: o.units,
-          lastPrice: asset?.lastPrice == null ? null : Number(asset.lastPrice),
+          lastPrice: price,
           belowMinTrade: o.value < minTrade,
         });
       }
     }
   }
 
+  if (orderLinesToCreate.length === 0) {
+    failuresToCreate.push({
+      reason: 'NO_ORDERS_GENERATED',
+      detail: 'No orders were generated - accounts may already match their model allocation, or were excluded (see Exclusions/Failures above).',
+    });
+  }
+
   await prisma.$transaction(async (tx) => {
     await tx.orderLine.deleteMany({ where: { allocationListId: listId } });
+    await tx.exclusion.deleteMany({ where: { allocationListId: listId } });
+    await tx.failure.deleteMany({ where: { allocationListId: listId } });
     if (orderLinesToCreate.length > 0) {
       await tx.orderLine.createMany({
         data: orderLinesToCreate.map((o) => ({ allocationListId: listId, ...o })),
+      });
+    }
+    if (exclusionsToCreate.length > 0) {
+      await tx.exclusion.createMany({
+        data: exclusionsToCreate.map((e) => ({ allocationListId: listId, ...e })),
+      });
+    }
+    if (failuresToCreate.length > 0) {
+      await tx.failure.createMany({
+        data: failuresToCreate.map((f) => ({ allocationListId: listId, ...f })),
       });
     }
     await tx.allocationList.update({
@@ -261,14 +377,6 @@ export async function generateOrders(user: AuthTokenPayload, listId: string) {
       },
     });
   });
-
-  if (orderLinesToCreate.length === 0) {
-    throw new ApiException(
-      422,
-      'NO_ORDERS_GENERATED',
-      'No orders were generated - accounts may already match their model allocation.',
-    );
-  }
 
   return serializeAllocationList(await getAllocationListOrThrow(listId));
 }
