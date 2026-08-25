@@ -12,6 +12,17 @@ interface ClientAccountRow {
   linkedModelId: string | null;
   linkedModelName: string | null;
   availableCash: number;
+  accountType: string;
+  hasConsent: boolean;
+  /** Only present when the row was fetched against this specific model. */
+  eligible?: boolean;
+  ineligibleReason?: string;
+}
+
+interface IneligibleAccountDetail {
+  accountId: string;
+  accountNumber: string;
+  reason: string;
 }
 
 /** Guide 4.1.4 "Client Accounts": attach/detach accounts to this model. */
@@ -24,10 +35,13 @@ export function ClientAccountsTab({ model }: { model: ModelDetail }) {
   const [error, setError] = useState<string | null>(null);
 
   const availableQuery = useQuery({
-    queryKey: ['client-accounts', 'available', search, onlyUnattached],
+    queryKey: ['client-accounts', 'available', model.id, search, onlyUnattached],
     queryFn: () =>
+      // eligibilityModelId (not modelId - that filters by attachment, which
+      // would conflict with unattachedOnly) so the API can compute
+      // eligibility - see guide 4.1.4 consent/account-type suitability gating.
       api.get<ClientAccountRow[]>(
-        `/client-accounts?${onlyUnattached ? 'unattachedOnly=true&' : ''}${
+        `/client-accounts?eligibilityModelId=${model.id}&${onlyUnattached ? 'unattachedOnly=true&' : ''}${
           search.length >= 3 ? `search=${encodeURIComponent(search)}` : ''
         }`,
       ),
@@ -49,7 +63,14 @@ export function ClientAccountsTab({ model }: { model: ModelDetail }) {
       setSelectedAvailable(new Set());
       invalidate();
     },
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'Failed to attach accounts.'),
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'ACCOUNTS_NOT_ELIGIBLE' && Array.isArray(err.details)) {
+        const details = err.details as IneligibleAccountDetail[];
+        setError(details.map((d) => `${d.accountNumber}: ${d.reason}`).join(' '));
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Failed to attach accounts.');
+      }
+    },
   });
 
   const detachMutation = useMutation({
@@ -144,30 +165,46 @@ function AccountTable({
           <th>Account No.</th>
           <th>Account Name</th>
           <th>Client Name</th>
+          <th>Type</th>
           <th>Adviser</th>
           <th className="text-right">Available Cash</th>
         </tr>
       </thead>
       <tbody>
-        {accounts?.map((a) => (
-          <tr key={a.id} className="border-b border-slate-100">
-            <td className="py-2">
-              <input
-                type="checkbox"
-                checked={selected.has(a.id)}
-                onChange={(e) => onToggle(a.id, e.target.checked)}
-              />
-            </td>
-            <td>{a.accountNumber}</td>
-            <td>{a.accountName}</td>
-            <td>{a.clientName}</td>
-            <td className="text-slate-500">{a.adviserName}</td>
-            <td className="text-right">£{a.availableCash.toFixed(2)}</td>
-          </tr>
-        ))}
+        {accounts?.map((a) => {
+          // eligible is only present (true/false) on the "available" table,
+          // which fetches with eligibilityModelId - guide 4.1.4 consent/
+          // account-type suitability gating.
+          const ineligible = a.eligible === false;
+          return (
+            <tr
+              key={a.id}
+              className={`border-b border-slate-100 ${ineligible ? 'opacity-50' : ''}`}
+              title={ineligible ? a.ineligibleReason : undefined}
+            >
+              <td className="py-2">
+                <input
+                  type="checkbox"
+                  checked={selected.has(a.id)}
+                  disabled={ineligible}
+                  onChange={(e) => onToggle(a.id, e.target.checked)}
+                />
+              </td>
+              <td>{a.accountNumber}</td>
+              <td>{a.accountName}</td>
+              <td>{a.clientName}</td>
+              <td className="text-slate-500">
+                {a.accountType}
+                {ineligible && <span className="ml-1 text-red-500">- {a.ineligibleReason}</span>}
+              </td>
+              <td className="text-slate-500">{a.adviserName}</td>
+              <td className="text-right">£{a.availableCash.toFixed(2)}</td>
+            </tr>
+          );
+        })}
         {accounts?.length === 0 && (
           <tr>
-            <td colSpan={6} className="py-4 text-center text-slate-400">
+            <td colSpan={7} className="py-4 text-center text-slate-400">
               No accounts found.
             </td>
           </tr>
