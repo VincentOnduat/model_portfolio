@@ -1,0 +1,417 @@
+// Model Portfolio - Prisma schema
+//
+// Mirrors the domain described in the Model Portfolio User Guide:
+//   - Firms/Users with role-based access (chapter "User")
+//   - Models, Assets, ModelAsset allocations (4.1.1 - 4.1.3)
+//   - Client Accounts attached to a Model (4.1.4)
+//   - Sharing grants: Firm / Enterprise / Third Party (4.1.5)
+//   - Allocation Lists (Money Allocation / Rebalance) and their generated
+//     Orders, Exclusions and Failures (4.2)
+//
+// Enum values are kept in sync by hand with packages/shared/src/enums.ts -
+// see docs/domain-model.md for the mapping table.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  PLATFORM_ADMIN
+  PLATFORM_SUPPORT
+  ADVISER_MODEL_OWNER
+  ADVISER_STANDARD
+  THIRD_PARTY_MODEL_OWNER
+  THIRD_PARTY_STANDARD
+}
+
+enum ModelStatus {
+  DRAFT
+  LIVE
+}
+
+enum ModelLockState {
+  LOCKED
+  UNLOCKED
+}
+
+enum ModelAim {
+  BALANCE
+  GROWTH
+  BALANCED_AND_GROWTH
+  INCOME_AND_GROWTH
+  INCOME
+  NOT_SPECIFIED
+}
+
+enum ModelRisk {
+  HIGH
+  LOW
+  LOW_MEDIUM
+  MEDIUM
+  MEDIUM_HIGH
+  NOT_SPECIFIED
+}
+
+enum AssetSector {
+  EQUITY
+  BOND
+  WARRANT
+  FUND
+  CASH
+  OTHER
+}
+
+enum SharingScope {
+  FIRM
+  ENTERPRISE
+  THIRD_PARTY
+}
+
+enum SharingKind {
+  DEFAULT
+  BESPOKE
+}
+
+enum AllocationListType {
+  MONEY_ALLOCATION
+  REBALANCE
+}
+
+enum AllocationListStatus {
+  CLIENT_ACCOUNTS_SELECTED
+  GENERATING_ORDERS
+  POTENTIAL_ORDERS_GENERATED
+  SENDING_ORDERS
+  ORDERS_SUBMITTED
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum ExclusionReason {
+  ASSET_NOT_TRADEABLE
+  RESTRICTED_ASSET
+  NO_PRICE_AVAILABLE
+  BELOW_MINIMUM_TRADE_VALUE
+  ACCOUNT_NOT_ATTACHED_TO_MODEL
+  CLIENT_DOCUMENTATION_INCOMPLETE
+}
+
+enum FailureReason {
+  ASSET_CANNOT_BE_TRADED
+  NO_PURCHASE_ALLOWED
+  RESTRICTED_ASSET_CANNOT_SELL
+  NO_PRICE_FOR_ASSET
+  UNEXECUTED_OR_UNSETTLED_TRANSACTIONS
+  NO_HOLDING_OR_CASH_AVAILABLE
+  ACCOUNT_CLOSED
+  CLIENT_DOCUMENTATION_NOT_COMPLETE
+  DEAL_STATUS_DISABLED
+  ACCOUNT_WRAPPER_RESTRICTION
+  INCOMPLETE_SETUP
+  ASSET_NOT_FOUND
+  ASSET_START_DATE_IN_FUTURE
+  CHARGES_NOT_SET_UP
+  UNABLE_TO_GENERATE_ORDERS
+  ACCOUNT_NO_LONGER_ATTACHED_TO_MODEL
+  NO_ORDERS_GENERATED
+}
+
+// ---------------------------------------------------------------------------
+// Organisation & identity
+// ---------------------------------------------------------------------------
+
+model Firm {
+  id             String   @id @default(uuid())
+  name           String
+  isThirdParty   Boolean  @default(false)
+  parentFirmId   String?
+  parentFirm     Firm?    @relation("FirmHierarchy", fields: [parentFirmId], references: [id])
+  childFirms     Firm[]   @relation("FirmHierarchy")
+  createdAt      DateTime @default(now())
+
+  users          User[]
+  ownedModels    Model[]           @relation("ModelOwnerFirm")
+  clientAccounts ClientAccount[]
+  sharesReceived SharingGrant[]    @relation("SharingGrantFirm")
+
+  @@index([parentFirmId])
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  displayName  String
+  role         Role
+  firmId       String
+  firm         Firm     @relation(fields: [firmId], references: [id])
+  createdAt    DateTime @default(now())
+
+  ownedModels        Model[]          @relation("ModelOwnerUser")
+  createdModels      Model[]          @relation("ModelCreatedBy")
+  updatedModels      Model[]          @relation("ModelUpdatedBy")
+  lockedModels       Model[]          @relation("ModelLockedBy")
+  clientAccounts     ClientAccount[]  @relation("ClientAccountAdviser")
+  sharingGrants      SharingGrant[]   @relation("SharingGrantUser")
+  allocationLists    AllocationList[] @relation("AllocationListCreatedBy")
+
+  @@index([firmId])
+}
+
+// ---------------------------------------------------------------------------
+// Assets & Models (guide 4.1)
+// ---------------------------------------------------------------------------
+
+model Asset {
+  id        String      @id @default(uuid())
+  name      String
+  isin      String      @unique
+  type      String
+  sector    AssetSector
+  isCash    Boolean     @default(false)
+  lastPrice Decimal?    @db.Decimal(18, 6)
+
+  modelAssets    ModelAsset[]
+  orderLines     OrderLine[]
+  exclusions     Exclusion[]
+  failures       Failure[]
+  holdings       Holding[]
+
+  @@index([sector])
+}
+
+model Model {
+  id                String         @id @default(uuid())
+  reference         String         @unique
+  name              String
+  status            ModelStatus    @default(DRAFT)
+  lockState         ModelLockState @default(UNLOCKED)
+  lockedByUserId    String?
+  lockedByUser      User?          @relation("ModelLockedBy", fields: [lockedByUserId], references: [id])
+  minimumTradeValue Decimal        @db.Decimal(18, 2)
+  chargePercent     Decimal?       @db.Decimal(5, 2)
+  vatIncluded       Boolean?
+  aim               ModelAim       @default(NOT_SPECIFIED)
+  risk              ModelRisk      @default(NOT_SPECIFIED)
+
+  ownerFirmId String
+  ownerFirm   Firm   @relation("ModelOwnerFirm", fields: [ownerFirmId], references: [id])
+  ownerUserId String
+  ownerUser   User   @relation("ModelOwnerUser", fields: [ownerUserId], references: [id])
+
+  createdByUserId String
+  createdByUser   User     @relation("ModelCreatedBy", fields: [createdByUserId], references: [id])
+  updatedByUserId String
+  updatedByUser   User     @relation("ModelUpdatedBy", fields: [updatedByUserId], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  assets          ModelAsset[]
+  clientAccounts  ClientAccount[]
+  sharingGrants   SharingGrant[]
+  allocationLists AllocationListAccount[]
+
+  @@index([ownerFirmId])
+  @@index([status])
+}
+
+/// Join table: which assets are allocated to a model, and at what percentage.
+/// Guide 4.1.3: "Assets Allocated to this Model" - percentAllocated is the
+/// last *saved* value; in-flight edits are validated client + server side
+/// against packages/shared/src/validation.ts before being persisted here.
+model ModelAsset {
+  modelId          String
+  model            Model   @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  assetId          String
+  asset            Asset   @relation(fields: [assetId], references: [id])
+  percentAllocated Decimal @db.Decimal(5, 2)
+
+  @@id([modelId, assetId])
+}
+
+// ---------------------------------------------------------------------------
+// Client accounts (guide 4.1.4)
+// ---------------------------------------------------------------------------
+
+model ClientAccount {
+  id                 String    @id @default(uuid())
+  accountNumber      String    @unique
+  accountName        String
+  clientName         String
+  clientNumber       String
+  adviserUserId      String
+  adviserUser        User      @relation("ClientAccountAdviser", fields: [adviserUserId], references: [id])
+  adviserFirmId      String
+  adviserFirm        Firm      @relation(fields: [adviserFirmId], references: [id])
+  linkedModelId      String?
+  linkedModel        Model?    @relation(fields: [linkedModelId], references: [id])
+  dateLinked         DateTime?
+  availableCash      Decimal   @default(0) @db.Decimal(18, 2)
+  cashAccountBalance Decimal   @default(0) @db.Decimal(18, 2)
+  lastRebalanceDate  DateTime?
+  createdAt          DateTime  @default(now())
+
+  allocationListAccounts AllocationListAccount[]
+  orderLines             OrderLine[]
+  exclusions             Exclusion[]
+  failures               Failure[]
+  holdings               Holding[]
+
+  @@index([linkedModelId])
+  @@index([adviserFirmId])
+}
+
+/// Current asset holdings for a client account - the "as-is" position the
+/// Rebalance algorithm (guide 4.2.4.1) compares against the model's target
+/// allocation. Cash is tracked on ClientAccount.availableCash /
+/// cashAccountBalance directly rather than as a Holding row.
+model Holding {
+  id        String  @id @default(uuid())
+  accountId String
+  account   ClientAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  assetId   String
+  asset     Asset   @relation(fields: [assetId], references: [id])
+  quantity  Decimal @db.Decimal(18, 6)
+
+  @@unique([accountId, assetId])
+}
+
+// ---------------------------------------------------------------------------
+// Model sharing (guide 4.1.5: Firm / Enterprise / Third Party)
+// ---------------------------------------------------------------------------
+
+/// A single sharing grant. Scope + kind determine which of granteeUserId /
+/// granteeFirmId is populated:
+///   FIRM        -> granteeUserId set (DEFAULT grants apply to the whole
+///                  firm and use a sentinel granteeUserId of null with
+///                  kind = DEFAULT; BESPOKE grants target one user)
+///   ENTERPRISE  -> granteeFirmId set (a child firm in the same organisation)
+///   THIRD_PARTY -> granteeFirmId set (an external firm under contract)
+model SharingGrant {
+  id     String       @id @default(uuid())
+  modelId String
+  model   Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  scope   SharingScope
+  kind    SharingKind  @default(BESPOKE)
+
+  granteeUserId String?
+  granteeUser   User?   @relation("SharingGrantUser", fields: [granteeUserId], references: [id])
+  granteeFirmId String?
+  granteeFirm   Firm?   @relation("SharingGrantFirm", fields: [granteeFirmId], references: [id])
+
+  canAttachAccounts Boolean @default(false)
+  canAllocateMoney  Boolean @default(false)
+  canRebalance      Boolean @default(false)
+  /// Never true for THIRD_PARTY scope - enforced in the service layer,
+  /// matching the guide's "there is no Edit permission possible" note.
+  canEditModel      Boolean @default(false)
+  allowOnwardShare  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([modelId])
+  @@index([granteeUserId])
+  @@index([granteeFirmId])
+}
+
+// ---------------------------------------------------------------------------
+// Money Allocation / Rebalance workflow (guide 4.2)
+// ---------------------------------------------------------------------------
+
+model AllocationList {
+  id        String                @id @default(uuid())
+  reference String                @unique
+  name      String
+  type      AllocationListType
+  status    AllocationListStatus  @default(CLIENT_ACCOUNTS_SELECTED)
+
+  createdByUserId String
+  createdByUser   User     @relation("AllocationListCreatedBy", fields: [createdByUserId], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  accounts   AllocationListAccount[]
+  orderLines OrderLine[]
+  exclusions Exclusion[]
+  failures   Failure[]
+
+  @@index([status])
+  @@index([type])
+}
+
+/// Client accounts attached to an Allocation List, plus the Money-Allocation-only
+/// fields (allocateAll / allocationAmount) described in guide 4.2.3 Step 1.
+model AllocationListAccount {
+  allocationListId String
+  allocationList   AllocationList @relation(fields: [allocationListId], references: [id], onDelete: Cascade)
+  accountId        String
+  account          ClientAccount  @relation(fields: [accountId], references: [id])
+  modelId          String
+  model            Model          @relation(fields: [modelId], references: [id])
+
+  allocateAll      Boolean?
+  allocationAmount Decimal?       @db.Decimal(18, 2)
+
+  @@id([allocationListId, accountId])
+}
+
+model OrderLine {
+  id               String         @id @default(uuid())
+  allocationListId String
+  allocationList   AllocationList @relation(fields: [allocationListId], references: [id], onDelete: Cascade)
+  accountId        String
+  account          ClientAccount  @relation(fields: [accountId], references: [id])
+  assetId          String
+  asset            Asset          @relation(fields: [assetId], references: [id])
+  side             OrderSide
+  units            Decimal?       @db.Decimal(18, 6)
+  value            Decimal        @db.Decimal(18, 2)
+  lastPrice        Decimal?       @db.Decimal(18, 6)
+  belowMinTrade    Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+
+  @@index([allocationListId])
+  @@index([accountId])
+}
+
+model Exclusion {
+  id               String           @id @default(uuid())
+  allocationListId String
+  allocationList   AllocationList   @relation(fields: [allocationListId], references: [id], onDelete: Cascade)
+  accountId        String?
+  account          ClientAccount?   @relation(fields: [accountId], references: [id])
+  assetId          String?
+  asset            Asset?           @relation(fields: [assetId], references: [id])
+  reason           ExclusionReason
+  detail           String
+  createdAt        DateTime         @default(now())
+
+  @@index([allocationListId])
+}
+
+model Failure {
+  id               String         @id @default(uuid())
+  allocationListId String
+  allocationList   AllocationList @relation(fields: [allocationListId], references: [id], onDelete: Cascade)
+  accountId        String?
+  account          ClientAccount? @relation(fields: [accountId], references: [id])
+  assetId          String?
+  asset            Asset?         @relation(fields: [assetId], references: [id])
+  reason           FailureReason
+  detail           String
+  createdAt        DateTime       @default(now())
+
+  @@index([allocationListId])
+}
