@@ -55,10 +55,19 @@ together.
   guide (an 11-step rebalance algorithm, and buy-only money allocation),
   the 3-step Select Accounts -> Generate Orders -> Confirm Orders workflow,
   and real Exclusions/Failures for the reasons this schema can ground
-  (non-tradeable/restricted/no-price assets, missing consent, zero orders
-  generated) - wired end to end against seeded demo data.
+  (non-tradeable/restricted/no-price assets, missing consent, unconfigured
+  charges, an account detached mid-workflow, zero orders generated) - wired
+  end to end against seeded demo data.
 - Role-based access control across six user roles, JWT auth, and a Postgres
   schema covering the full domain (see `apps/backend/prisma/schema.prisma`).
+- **API hardening**: paginated list endpoints (`GET /models`,
+  `GET /allocation-lists`), rate limiting on login and the API as a whole,
+  and a centralized error-response shape across every route.
+- **A real frontend, not just working forms**: a shared UI kit (buttons,
+  tables, badges) used consistently across every page, toast feedback on
+  every mutation, an accessible confirmation dialog for destructive actions,
+  keyboard/screen-reader-friendly tabs and checkboxes, and a mobile-friendly
+  collapsible layout.
 
 ## Tech stack
 
