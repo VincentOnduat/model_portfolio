@@ -6,15 +6,29 @@ import { api, ApiError } from '../../api/client';
 import { AssetsTab } from './AssetsTab';
 import { ClientAccountsTab } from './ClientAccountsTab';
 import { SharingTab } from './SharingTab';
+import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
+import { useToast } from '../../components/ui/useToast';
 
 type Tab = 'details' | 'assets' | 'accounts' | 'sharing';
+
+const TABS: [Tab, string][] = [
+  ['details', 'Model Details'],
+  ['assets', 'Assets'],
+  ['accounts', 'Client Accounts'],
+  ['sharing', 'Sharing'],
+];
 
 export function ModelDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [tab, setTab] = useState<Tab>('details');
   const [error, setError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const { data: model, isLoading } = useQuery({
     queryKey: ['model', id],
@@ -26,14 +40,23 @@ export function ModelDetailPage() {
 
   const lockMutation = useMutation({
     mutationFn: (lock: boolean) => api.post<ModelDetail>(`/models/${id}/${lock ? 'lock' : 'unlock'}`),
-    onSuccess: invalidate,
+    onSuccess: (_data, lock) => {
+      toast.success(lock ? 'Model locked for editing.' : 'Model unlocked.');
+      invalidate();
+    },
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Failed to update lock state.'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => api.delete(`/models/${id}`),
-    onSuccess: () => navigate('/models'),
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'Failed to delete model.'),
+    onSuccess: () => {
+      toast.success('Model deleted.');
+      navigate('/models');
+    },
+    onError: (err) => {
+      setConfirmingDelete(false);
+      setError(err instanceof ApiError ? err.message : 'Failed to delete model.');
+    },
   });
 
   if (isLoading || !model) {
@@ -47,51 +70,48 @@ export function ModelDetailPage() {
           <h1 className="text-2xl font-semibold">{model.name}</h1>
           <p className="text-sm text-slate-400">{model.reference}</p>
         </div>
-        <div className="flex gap-2">
-          <span
-            className={`self-start rounded-full px-3 py-1 text-xs font-medium ${
-              model.status === 'LIVE' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-            }`}
-          >
+        <div className="flex items-center gap-2">
+          <Badge tone={model.status === 'LIVE' ? 'green' : 'amber'} className="self-center">
             {model.status}
-          </span>
-          <button
+          </Badge>
+          <Button
+            variant="secondary"
+            size="sm"
+            isLoading={lockMutation.isPending}
             onClick={() => lockMutation.mutate(model.lockState === 'UNLOCKED')}
-            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
           >
-            {model.lockState === 'LOCKED' ? '🔓 Unlock' : '🔒 Lock to edit'}
-          </button>
-          <button
-            onClick={() => {
-              if (confirm('Delete this model? This cannot be undone.')) deleteMutation.mutate();
-            }}
+            <span aria-hidden="true">{model.lockState === 'LOCKED' ? '🔓' : '🔒'}</span>
+            {model.lockState === 'LOCKED' ? 'Unlock' : 'Lock to edit'}
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => setConfirmingDelete(true)}
             disabled={model.status === 'LIVE' && model.accountsAttachedCount > 0}
             title={
               model.status === 'LIVE' && model.accountsAttachedCount > 0
                 ? 'Live models with attached accounts cannot be deleted.'
                 : undefined
             }
-            className="rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-600 disabled:opacity-40"
           >
             Delete
-          </button>
+          </Button>
         </div>
       </div>
 
-      {error && <div className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      <div className="mt-4">
+        <ErrorBanner message={error} />
+      </div>
 
       <div className="mt-6 border-b border-slate-200">
-        <nav className="-mb-px flex gap-6">
-          {(
-            [
-              ['details', 'Model Details'],
-              ['assets', 'Assets'],
-              ['accounts', 'Client Accounts'],
-              ['sharing', 'Sharing'],
-            ] as const
-          ).map(([key, label]) => (
+        <nav role="tablist" aria-label="Model sections" className="-mb-px flex gap-6">
+          {TABS.map(([key, label]) => (
             <button
               key={key}
+              role="tab"
+              id={`tab-${key}`}
+              aria-selected={tab === key}
+              aria-controls={`tabpanel-${key}`}
               onClick={() => setTab(key)}
               className={`border-b-2 px-1 pb-3 text-sm font-medium ${
                 tab === key ? 'border-brand-500 text-brand-700' : 'border-transparent text-slate-500'
@@ -103,12 +123,26 @@ export function ModelDetailPage() {
         </nav>
       </div>
 
-      <div className="mt-6">
+      {/* Only the active tab's panel is mounted, so switching tabs doesn't
+          fire every tab's data queries up front - the panel wrapper still
+          carries the ARIA tabpanel role/labelling for the one that's shown. */}
+      <div role="tabpanel" id={`tabpanel-${tab}`} aria-labelledby={`tab-${tab}`} className="mt-6">
         {tab === 'details' && <DetailsTab model={model} />}
         {tab === 'assets' && <AssetsTab model={model} />}
         {tab === 'accounts' && <ClientAccountsTab model={model} />}
         {tab === 'sharing' && <SharingTab model={model} />}
       </div>
+
+      <ConfirmDialog
+        open={confirmingDelete}
+        title="Delete this model?"
+        description="This cannot be undone."
+        confirmLabel="Delete"
+        danger
+        isLoading={deleteMutation.isPending}
+        onConfirm={() => deleteMutation.mutate()}
+        onCancel={() => setConfirmingDelete(false)}
+      />
     </div>
   );
 }

@@ -2,10 +2,14 @@ import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ModelAim, ModelRisk, type ModelDetail } from '@model-portfolio/shared';
 import { api, ApiError } from '../../api/client';
+import { Button } from '../../components/ui/Button';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
+import { useToast } from '../../components/ui/useToast';
 
 /** Guide 4.1.2 "Model Details": preliminary data entered when creating a new model. */
 export function CreateModelPage() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [reference, setReference] = useState('');
   const [name, setName] = useState('');
   const [minimumTradeValue, setMinimumTradeValue] = useState('250');
@@ -26,6 +30,7 @@ export function CreateModelPage() {
         aim,
         risk,
       });
+      toast.success(`Model "${model.name}" created.`);
       navigate(`/models/${model.id}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to create model.');
@@ -43,7 +48,7 @@ export function CreateModelPage() {
       </p>
 
       <form onSubmit={handleSubmit} className="mt-6 space-y-4 rounded-lg border border-slate-200 bg-white p-6">
-        {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+        <ErrorBanner message={error} />
 
         <label className="block text-sm">
           <span className="mb-1 block text-slate-600">Model Reference</span>
@@ -113,13 +118,9 @@ export function CreateModelPage() {
           </label>
         </div>
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
-        >
-          {submitting ? 'Creating...' : 'Create Model'}
-        </button>
+        <Button type="submit" isLoading={submitting} loadingLabel="Creating...">
+          Create Model
+        </Button>
       </form>
     </div>
   );
