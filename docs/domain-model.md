@@ -107,6 +107,8 @@ actually has, in `allocationLists.service.ts#generateOrders`:
 | `NO_PRICE_AVAILABLE` | Non-cash asset with no `lastPrice`, on a buy | Money Allocation (Exclusion) |
 | `RESTRICTED_ASSET_CANNOT_SELL` | `Asset.isRestricted` is true, on a sell | Rebalance (Failure) |
 | `NO_PRICE_FOR_ASSET` | Non-cash asset with no `lastPrice` | Rebalance (Failure) |
+| `CHARGES_NOT_SET_UP` | `Model.chargePercent` is null, on a buy | Rebalance (Failure) |
+| `ACCOUNT_NO_LONGER_ATTACHED_TO_MODEL` | Account was detached from its model between Step 2 (Generate Orders) and Step 3 (Confirm) | Both (Failure) - checked in `confirmOrders`, complementing the pre-generation `ACCOUNT_NOT_ATTACHED_TO_MODEL` exclusion check above |
 | `NO_ORDERS_GENERATED` | Zero orders survived generation | Both (Failure) - previously thrown as an opaque 422; now a real row, and the request still succeeds so the frontend's Exclusions/Failures panel can explain why |
 
 Money Allocation only ever produces buys, so its asset-level issues use
@@ -116,12 +118,16 @@ sells, so its asset-level issues use the richer, dealing-oriented
 model/account (`apps/backend/prisma/seed.ts`) and unit-tested in
 `apps/backend/src/__tests__/allocationLists.service.test.ts`.
 
-**Still not implemented**: the remaining ~15 reasons name concepts this
-scaffold has no data for at all - CREST status, deal-status workflows,
-charges setup, a documentation-completeness workflow beyond consent, etc.
-Each remaining `ExclusionReason`/`FailureReason` enum value in
-`packages/shared/src/enums.ts` is still named after its guide bullet point,
-so the mapping stays easy for whoever adds the schema/logic for those next.
+**Still not implemented**: the remaining ~13 reasons name concepts this
+scaffold has no data for at all - CREST status, deal-status workflows, a
+documentation-completeness workflow beyond consent, etc. Each remaining
+`ExclusionReason`/`FailureReason` enum value in `packages/shared/src/enums.ts`
+is still named after its guide bullet point, so the mapping stays easy for
+whoever adds the schema/logic for those next. These were deliberately left
+alone rather than guessed at: this is a compliance-sensitive domain (client
+suitability, order exclusion) and the remaining reasons need real spec input
+(the source guide text, not just its bullet-point names) before it's safe to
+encode the business rule behind them.
 
 ## Holdings
 

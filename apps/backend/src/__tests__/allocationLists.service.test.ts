@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Role, AllocationListType } from '@model-portfolio/shared';
 import { prisma } from '../lib/prisma.js';
-import { createAllocationList, generateOrders } from '../services/allocationLists.service.js';
+import { confirmOrders, createAllocationList, generateOrders } from '../services/allocationLists.service.js';
 import type { AuthTokenPayload } from '../lib/jwt.js';
 
 // Exercises the Exclusions/Failures generation logic (guide 4.2.5/4.2.6)
@@ -21,6 +21,7 @@ let noConsentAccountId: string;
 let allOrdersExcludedModelId: string;
 let rebalanceModelId: string;
 let overweightRestrictedAccountId: string;
+let detachDuringConfirmAccountId: string;
 
 beforeAll(async () => {
   const firm = await prisma.firm.create({ data: { name: 'Test Firm - allocationLists.service.test' } });
@@ -161,11 +162,34 @@ beforeAll(async () => {
       adviserFirmId: firmId,
       linkedModelId: rebalanceModelId,
       // Holds only the restricted asset (target 50%), so Rebalance must SELL
-      // it down - which should fail rather than silently execute.
-      holdings: { create: [{ assetId: restrictedAssetId, quantity: 100 }] },
+      // it down - which should fail rather than silently execute. Also holds
+      // a zero quantity of the tradeable asset purely so the engine sees a
+      // price for it (calculateRebalance only receives a price for assets
+      // present in the account's holdings, even at zero quantity) and raises
+      // the corresponding BUY leg instead of treating it as priceless.
+      holdings: {
+        create: [
+          { assetId: restrictedAssetId, quantity: 100 },
+          { assetId: tradeableAssetId, quantity: 0 },
+        ],
+      },
     },
   });
   overweightRestrictedAccountId = overweightRestrictedAccount.id;
+
+  const detachDuringConfirmAccount = await prisma.clientAccount.create({
+    data: {
+      accountNumber: 'TEST-ACC-0004',
+      accountName: 'Test Detach-During-Confirm Account',
+      clientName: 'Test Client 4',
+      clientNumber: 'TEST-CL-0004',
+      adviserUserId: userId,
+      adviserFirmId: firmId,
+      linkedModelId: modelId,
+      availableCash: 500,
+    },
+  });
+  detachDuringConfirmAccountId = detachDuringConfirmAccount.id;
 });
 
 afterAll(async () => {
@@ -251,5 +275,48 @@ describe('generateOrders - Exclusions/Failures (guide 4.2.5/4.2.6)', () => {
     const failure = result.failures.find((f) => f.reason === 'RESTRICTED_ASSET_CANNOT_SELL');
     expect(failure).toBeDefined();
     expect(failure?.assetId).toBe(restrictedAssetId);
+  });
+
+  it('fails a Rebalance buy order when the model has no charge percent configured', async () => {
+    // rebalanceModelId's fixture never sets chargePercent, so its BUY leg
+    // (funded by selling down the overweight restricted holding) should be
+    // recorded as a Failure rather than an order line.
+    const list = await createAllocationList(user, {
+      type: AllocationListType.REBALANCE,
+      name: 'Test list - charges not set up',
+      accounts: [{ accountId: overweightRestrictedAccountId }],
+    });
+
+    const result = await generateOrders(user, list.id);
+
+    expect(result.orders.some((o) => o.assetId === tradeableAssetId)).toBe(false);
+    const failure = result.failures.find((f) => f.reason === 'CHARGES_NOT_SET_UP');
+    expect(failure).toBeDefined();
+    expect(failure?.assetId).toBe(tradeableAssetId);
+  });
+
+  it('excludes stale order lines and records ACCOUNT_NO_LONGER_ATTACHED_TO_MODEL if an account is detached before confirmation', async () => {
+    const list = await createAllocationList(user, {
+      type: AllocationListType.MONEY_ALLOCATION,
+      name: 'Test list - detached before confirm',
+      accounts: [{ accountId: detachDuringConfirmAccountId, allocateAll: true }],
+    });
+
+    const generated = await generateOrders(user, list.id);
+    expect(generated.orders.length).toBeGreaterThan(0);
+    expect(generated.status).toBe('POTENTIAL_ORDERS_GENERATED');
+
+    await prisma.clientAccount.update({
+      where: { id: detachDuringConfirmAccountId },
+      data: { linkedModelId: null },
+    });
+
+    const confirmed = await confirmOrders(user, list.id);
+
+    expect(confirmed.status).toBe('ORDERS_SUBMITTED');
+    expect(confirmed.orders.some((o) => o.accountId === detachDuringConfirmAccountId)).toBe(false);
+    const failure = confirmed.failures.find((f) => f.reason === 'ACCOUNT_NO_LONGER_ATTACHED_TO_MODEL');
+    expect(failure).toBeDefined();
+    expect(failure?.accountId).toBe(detachDuringConfirmAccountId);
   });
 });

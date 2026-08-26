@@ -54,16 +54,31 @@ export function serializeModel(model: Prisma.ModelGetPayload<{ include: typeof m
   };
 }
 
-export async function listModels(params: { status?: ModelStatus; firmId?: string }) {
-  const models = await prisma.model.findMany({
-    where: {
-      status: params.status,
-      ownerFirmId: params.firmId,
-    },
-    include: modelInclude,
-    orderBy: { updatedAt: 'desc' },
-  });
-  return models.map(serializeModel);
+const DEFAULT_PAGE_SIZE = 25;
+const MAX_PAGE_SIZE = 100;
+
+export async function listModels(params: {
+  status?: ModelStatus;
+  firmId?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  const page = params.page ?? 1;
+  const pageSize = Math.min(params.pageSize ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+  const where = { status: params.status, ownerFirmId: params.firmId };
+
+  const [models, total] = await Promise.all([
+    prisma.model.findMany({
+      where,
+      include: modelInclude,
+      orderBy: { updatedAt: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.model.count({ where }),
+  ]);
+
+  return { items: models.map(serializeModel), total, page, pageSize };
 }
 
 export async function getModelOrThrow(id: string) {
