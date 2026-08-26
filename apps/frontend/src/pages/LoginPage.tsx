@@ -2,6 +2,8 @@ import { useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { ApiError } from '../api/client';
+import { Button } from '../components/ui/Button';
+import { ErrorBanner } from '../components/ui/ErrorBanner';
 
 export function LoginPage() {
   const { login, user } = useAuth();
@@ -33,9 +35,9 @@ export function LoginPage() {
         <h1 className="mb-1 text-xl font-semibold text-brand-700">Model Portfolio</h1>
         <p className="mb-6 text-sm text-slate-500">Sign in to continue.</p>
 
-        {error && (
-          <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-        )}
+        <div className="mb-4">
+          <ErrorBanner message={error} />
+        </div>
 
         <label className="mb-3 block text-sm">
           <span className="mb-1 block text-slate-600">Email</span>
@@ -59,13 +61,9 @@ export function LoginPage() {
           />
         </label>
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className="w-full rounded-md bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
-        >
-          {submitting ? 'Signing in...' : 'Sign in'}
-        </button>
+        <Button type="submit" isLoading={submitting} loadingLabel="Signing in..." className="w-full">
+          Sign in
+        </Button>
 
         <p className="mt-4 text-xs text-slate-400">
           Demo seed users (password <code>Password123!</code>): owner@northbridge.test,

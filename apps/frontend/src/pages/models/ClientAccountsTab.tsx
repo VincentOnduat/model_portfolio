@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ModelDetail } from '@model-portfolio/shared';
 import { api, ApiError } from '../../api/client';
+import { Button } from '../../components/ui/Button';
+import { EmptyTableRow } from '../../components/ui/EmptyState';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
+import { Table } from '../../components/ui/Table';
+import { useToast } from '../../components/ui/useToast';
 
 interface ClientAccountRow {
   id: string;
@@ -28,6 +33,7 @@ interface IneligibleAccountDetail {
 /** Guide 4.1.4 "Client Accounts": attach/detach accounts to this model. */
 export function ClientAccountsTab({ model }: { model: ModelDetail }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [search, setSearch] = useState('');
   const [onlyUnattached, setOnlyUnattached] = useState(true);
   const [selectedAvailable, setSelectedAvailable] = useState<Set<string>>(new Set());
@@ -59,7 +65,8 @@ export function ClientAccountsTab({ model }: { model: ModelDetail }) {
 
   const attachMutation = useMutation({
     mutationFn: (accountIds: string[]) => api.post('/client-accounts/attach', { modelId: model.id, accountIds }),
-    onSuccess: () => {
+    onSuccess: (_data, accountIds) => {
+      toast.success(`${accountIds.length} account(s) attached to the model.`);
       setSelectedAvailable(new Set());
       invalidate();
     },
@@ -75,7 +82,8 @@ export function ClientAccountsTab({ model }: { model: ModelDetail }) {
 
   const detachMutation = useMutation({
     mutationFn: (accountIds: string[]) => api.post('/client-accounts/detach', { accountIds }),
-    onSuccess: () => {
+    onSuccess: (_data, accountIds) => {
+      toast.success(`${accountIds.length} account(s) detached from the model.`);
       setSelectedAttached(new Set());
       invalidate();
     },
@@ -84,7 +92,7 @@ export function ClientAccountsTab({ model }: { model: ModelDetail }) {
 
   return (
     <div className="space-y-8">
-      {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      <ErrorBanner message={error} />
 
       <section>
         <h3 className="mb-2 font-medium">Client Accounts Available for this Model</h3>
@@ -113,13 +121,15 @@ export function ClientAccountsTab({ model }: { model: ModelDetail }) {
             })
           }
         />
-        <button
-          disabled={selectedAvailable.size === 0 || attachMutation.isPending}
+        <Button
+          size="sm"
+          disabled={selectedAvailable.size === 0}
+          isLoading={attachMutation.isPending}
           onClick={() => attachMutation.mutate([...selectedAvailable])}
-          className="mt-3 rounded-md bg-brand-500 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+          className="mt-3"
         >
           Attach Selected Client Accounts to Model
-        </button>
+        </Button>
       </section>
 
       <section>
@@ -136,13 +146,16 @@ export function ClientAccountsTab({ model }: { model: ModelDetail }) {
             })
           }
         />
-        <button
-          disabled={selectedAttached.size === 0 || detachMutation.isPending}
+        <Button
+          variant="danger"
+          size="sm"
+          disabled={selectedAttached.size === 0}
+          isLoading={detachMutation.isPending}
           onClick={() => detachMutation.mutate([...selectedAttached])}
-          className="mt-3 rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-600 disabled:opacity-50"
+          className="mt-3"
         >
           Detach Selected Account from Model
-        </button>
+        </Button>
       </section>
     </div>
   );
@@ -158,7 +171,7 @@ function AccountTable({
   onToggle: (id: string, checked: boolean) => void;
 }) {
   return (
-    <table className="w-full text-sm">
+    <Table>
       <thead>
         <tr className="border-b border-slate-200 text-left text-slate-500">
           <th className="w-8 py-2"></th>
@@ -185,6 +198,7 @@ function AccountTable({
               <td className="py-2">
                 <input
                   type="checkbox"
+                  aria-label={`Select account ${a.accountNumber}${ineligible ? ` (ineligible: ${a.ineligibleReason})` : ''}`}
                   checked={selected.has(a.id)}
                   disabled={ineligible}
                   onChange={(e) => onToggle(a.id, e.target.checked)}
@@ -202,14 +216,8 @@ function AccountTable({
             </tr>
           );
         })}
-        {accounts?.length === 0 && (
-          <tr>
-            <td colSpan={7} className="py-4 text-center text-slate-400">
-              No accounts found.
-            </td>
-          </tr>
-        )}
+        {accounts?.length === 0 && <EmptyTableRow colSpan={7} message="No accounts found." />}
       </tbody>
-    </table>
+    </Table>
   );
 }

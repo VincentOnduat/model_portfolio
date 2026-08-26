@@ -3,6 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { AllocationListStatus } from '@model-portfolio/shared';
 import { api, ApiError } from '../../api/client';
+import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
+import { EmptyTableRow } from '../../components/ui/EmptyState';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
+import { Table } from '../../components/ui/Table';
+import { useToast } from '../../components/ui/useToast';
 
 interface OrderLine {
   id: string;
@@ -40,6 +46,7 @@ interface AllocationListDetail {
 export function AllocationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
@@ -54,6 +61,7 @@ export function AllocationDetailPage() {
   const removeMutation = useMutation({
     mutationFn: () => api.post(`/allocation-lists/${id}/remove-orders`, { orderLineIds: [...selectedOrders] }),
     onSuccess: () => {
+      toast.success('Selected orders removed.');
       setSelectedOrders(new Set());
       invalidate();
     },
@@ -62,7 +70,10 @@ export function AllocationDetailPage() {
 
   const confirmMutation = useMutation({
     mutationFn: () => api.post(`/allocation-lists/${id}/confirm-orders`),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      toast.success('Orders confirmed and submitted for trading.');
+      invalidate();
+    },
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Failed to confirm orders.'),
   });
 
@@ -77,11 +88,13 @@ export function AllocationDetailPage() {
       <p className="text-sm text-slate-400">
         {list.reference} · {list.type.replaceAll('_', ' ')}
       </p>
-      <span className="mt-2 inline-block rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+      <Badge tone="slate" className="mt-2">
         {list.status.replaceAll('_', ' ')}
-      </span>
+      </Badge>
 
-      {error && <div className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      <div className="mt-4">
+        <ErrorBanner message={error} />
+      </div>
 
       {list.exclusions.length > 0 && (
         <section className="mt-6">
@@ -123,7 +136,7 @@ export function AllocationDetailPage() {
 
       <section className="mt-6">
         <h3 className="mb-2 font-medium">Detailed Confirmation</h3>
-        <table className="w-full text-sm">
+        <Table>
           <thead>
             <tr className="border-b border-slate-200 text-left text-slate-500">
               {isStep2 && <th className="w-8 py-2"></th>}
@@ -143,6 +156,7 @@ export function AllocationDetailPage() {
                   <td className="py-2">
                     <input
                       type="checkbox"
+                      aria-label={`Select order: ${o.side} ${o.assetName} for ${o.accountName}`}
                       checked={selectedOrders.has(o.id)}
                       onChange={(e) =>
                         setSelectedOrders((prev) => {
@@ -166,33 +180,24 @@ export function AllocationDetailPage() {
                 <td>{o.belowMinTrade ? 'Yes' : ''}</td>
               </tr>
             ))}
-            {list.orders.length === 0 && (
-              <tr>
-                <td colSpan={8} className="py-4 text-center text-slate-400">
-                  No orders.
-                </td>
-              </tr>
-            )}
+            {list.orders.length === 0 && <EmptyTableRow colSpan={8} message="No orders." />}
           </tbody>
-        </table>
+        </Table>
       </section>
 
       {isStep2 && (
         <div className="mt-6 flex gap-3">
-          <button
-            disabled={selectedOrders.size === 0 || removeMutation.isPending}
+          <Button
+            variant="danger"
+            disabled={selectedOrders.size === 0}
+            isLoading={removeMutation.isPending}
             onClick={() => removeMutation.mutate()}
-            className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-600 disabled:opacity-50"
           >
             Remove Potential Orders
-          </button>
-          <button
-            disabled={confirmMutation.isPending}
-            onClick={() => confirmMutation.mutate()}
-            className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-          >
+          </Button>
+          <Button isLoading={confirmMutation.isPending} onClick={() => confirmMutation.mutate()}>
             Confirm Orders
-          </button>
+          </Button>
         </div>
       )}
 

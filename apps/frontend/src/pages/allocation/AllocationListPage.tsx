@@ -1,8 +1,18 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { AllocationListStatus, AllocationListType, type AllocationListSummary } from '@model-portfolio/shared';
+import {
+  AllocationListStatus,
+  AllocationListType,
+  type AllocationListSummary,
+  type Paginated,
+} from '@model-portfolio/shared';
 import { api, ApiError } from '../../api/client';
+import { Button } from '../../components/ui/Button';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
+import { Pagination } from '../../components/ui/Pagination';
+import { useToast } from '../../components/ui/useToast';
 
 const STATUS_LABEL: Record<AllocationListStatus, string> = {
   [AllocationListStatus.CLIENT_ACCOUNTS_SELECTED]: 'Client Accounts Selected',
@@ -16,22 +26,27 @@ const STATUS_LABEL: Record<AllocationListStatus, string> = {
 export function AllocationListPage() {
   const [typeFilter, setTypeFilter] = useState<Set<AllocationListType>>(new Set());
   const [statusFilter, setStatusFilter] = useState<Set<AllocationListStatus>>(new Set());
+  const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const toast = useToast();
 
-  const { data: lists } = useQuery({
-    queryKey: ['allocation-lists'],
-    queryFn: () => api.get<AllocationListSummary[]>('/allocation-lists'),
+  const { data } = useQuery({
+    queryKey: ['allocation-lists', page],
+    queryFn: () => api.get<Paginated<AllocationListSummary>>(`/allocation-lists?page=${page}`),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/allocation-lists/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['allocation-lists'] }),
+    onSuccess: () => {
+      toast.success('List deleted.');
+      queryClient.invalidateQueries({ queryKey: ['allocation-lists'] });
+    },
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Failed to delete list.'),
   });
 
-  const filtered = lists?.filter(
+  const filtered = data?.items.filter(
     (l) =>
       (typeFilter.size === 0 || typeFilter.has(l.type)) &&
       (statusFilter.size === 0 || statusFilter.has(l.status)),
@@ -48,15 +63,12 @@ export function AllocationListPage() {
     <div>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Money Allocation / Rebalance</h1>
-        <button
-          onClick={() => navigate('/allocation/new')}
-          className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
-        >
-          Create New List
-        </button>
+        <Button onClick={() => navigate('/allocation/new')}>Create New List</Button>
       </div>
 
-      {error && <div className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      <div className="mt-4">
+        <ErrorBanner message={error} />
+      </div>
 
       <div className="mt-4 flex flex-wrap gap-4">
         <div className="flex gap-2">
@@ -96,12 +108,16 @@ export function AllocationListPage() {
             <Link to={`/allocation/${l.id}`} className="flex-1">
               <div className="flex items-center gap-3">
                 <span
+                  aria-hidden="true"
                   className={`h-2 w-2 rounded-full ${
                     l.hasExclusions || l.hasFailures ? 'bg-red-500' : 'bg-green-500'
                   }`}
                 />
                 <span className="font-medium">{l.name}</span>
                 <span className="text-xs text-slate-400">{l.reference}</span>
+                {(l.hasExclusions || l.hasFailures) && (
+                  <span className="text-xs text-red-600">Has exclusions/failures</span>
+                )}
               </div>
               <p className="mt-1 text-xs text-slate-500">
                 {l.type.replaceAll('_', ' ')} · {STATUS_LABEL[l.status]} · {l.accountCount} account(s)
@@ -117,8 +133,10 @@ export function AllocationListPage() {
             )}
           </div>
         ))}
-        {filtered?.length === 0 && <p className="text-slate-500">No lists match this filter.</p>}
+        {filtered?.length === 0 && <EmptyState message="No lists match this filter." />}
       </div>
+
+      {data && <Pagination page={data.page} pageSize={data.pageSize} total={data.total} onPageChange={setPage} />}
     </div>
   );
 }

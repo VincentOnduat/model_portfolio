@@ -183,3 +183,11 @@ export interface ApiError {
   message: string;
   details?: unknown;
 }
+
+/** Standard page envelope returned by list endpoints that support pagination. */
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}

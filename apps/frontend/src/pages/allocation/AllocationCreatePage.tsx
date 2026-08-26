@@ -3,6 +3,11 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { AllocationListType, type AllocationListSummary } from '@model-portfolio/shared';
 import { api, ApiError } from '../../api/client';
+import { Button } from '../../components/ui/Button';
+import { EmptyTableRow } from '../../components/ui/EmptyState';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
+import { Table } from '../../components/ui/Table';
+import { useToast } from '../../components/ui/useToast';
 
 interface ClientAccountRow {
   id: string;
@@ -17,6 +22,7 @@ interface ClientAccountRow {
 /** Guide 4.2.3/4.2.4 Step 1: Select Accounts. */
 export function AllocationCreatePage() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [type, setType] = useState<AllocationListType>(AllocationListType.MONEY_ALLOCATION);
   const [name, setName] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -51,7 +57,10 @@ export function AllocationCreatePage() {
       await api.post(`/allocation-lists/${list.id}/generate-orders`);
       return list;
     },
-    onSuccess: (list) => navigate(`/allocation/${list.id}`),
+    onSuccess: (list) => {
+      toast.success('Orders generated.');
+      navigate(`/allocation/${list.id}`);
+    },
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Failed to generate orders.'),
   });
 
@@ -82,10 +91,12 @@ export function AllocationCreatePage() {
         />
       </label>
 
-      {error && <div className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      <div className="mt-4">
+        <ErrorBanner message={error} />
+      </div>
 
       <h3 className="mb-2 mt-6 font-medium">Available Client Accounts</h3>
-      <table className="w-full text-sm">
+      <Table>
         <thead>
           <tr className="border-b border-slate-200 text-left text-slate-500">
             <th className="w-8 py-2"></th>
@@ -103,6 +114,7 @@ export function AllocationCreatePage() {
               <td className="py-2">
                 <input
                   type="checkbox"
+                  aria-label={`Select account ${a.accountNumber}`}
                   checked={selected.has(a.id)}
                   onChange={(e) =>
                     setSelected((prev) => {
@@ -122,6 +134,7 @@ export function AllocationCreatePage() {
                 <td className="text-center">
                   <input
                     type="checkbox"
+                    aria-label={`Allocate all available cash for account ${a.accountNumber}`}
                     checked={allocateAllFor.has(a.id)}
                     onChange={(e) =>
                       setAllocateAllFor((prev) => {
@@ -150,22 +163,20 @@ export function AllocationCreatePage() {
             </tr>
           ))}
           {eligible?.length === 0 && (
-            <tr>
-              <td colSpan={6} className="py-4 text-center text-slate-400">
-                No client accounts are attached to a model yet.
-              </td>
-            </tr>
+            <EmptyTableRow colSpan={6} message="No client accounts are attached to a model yet." />
           )}
         </tbody>
-      </table>
+      </Table>
 
-      <button
-        disabled={selected.size === 0 || !name || createMutation.isPending}
+      <Button
+        disabled={selected.size === 0 || !name}
+        isLoading={createMutation.isPending}
+        loadingLabel="Generating..."
         onClick={() => createMutation.mutate()}
-        className="mt-4 rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+        className="mt-4"
       >
         Generate Orders
-      </button>
+      </Button>
     </div>
   );
 }

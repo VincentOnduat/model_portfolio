@@ -14,6 +14,8 @@ modelsRouter.use(requireAuth, requirePermission(Permission.MODEL_MANAGEMENT_ACCE
 const listQuerySchema = z.object({
   status: z.nativeEnum(ModelStatus).optional(),
   mine: z.coerce.boolean().optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
 });
 
 modelsRouter.get(
@@ -23,6 +25,8 @@ modelsRouter.get(
     const models = await ModelsService.listModels({
       status: query.status,
       firmId: query.mine ? req.user!.firmId : undefined,
+      page: query.page,
+      pageSize: query.pageSize,
     });
     res.json(models);
   }),

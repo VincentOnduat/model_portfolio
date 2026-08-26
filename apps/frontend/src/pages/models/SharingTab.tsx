@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { SharingKind, SharingScope, type ModelDetail } from '@model-portfolio/shared';
 import { api, ApiError } from '../../api/client';
+import { Button } from '../../components/ui/Button';
+import { EmptyTableRow } from '../../components/ui/EmptyState';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
+import { Table } from '../../components/ui/Table';
+import { useToast } from '../../components/ui/useToast';
 
 interface SharingGrantRow {
   id: string;
@@ -40,6 +45,7 @@ export function SharingTab({ model }: { model: ModelDetail }) {
   });
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const toast = useToast();
 
   const { data: grants } = useQuery({
     queryKey: ['sharing', model.id, scope],
@@ -66,6 +72,7 @@ export function SharingTab({ model }: { model: ModelDetail }) {
         ...perms,
       }),
     onSuccess: () => {
+      toast.success('Sharing grant created.');
       setGranteeId('');
       invalidate();
     },
@@ -74,7 +81,11 @@ export function SharingTab({ model }: { model: ModelDetail }) {
 
   const revokeMutation = useMutation({
     mutationFn: (grantId: string) => api.delete(`/models/${model.id}/sharing/${grantId}`),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      toast.success('Sharing grant revoked.');
+      invalidate();
+    },
+    onError: (err) => setError(err instanceof ApiError ? err.message : 'Failed to revoke sharing grant.'),
   });
 
   return (
@@ -96,9 +107,11 @@ export function SharingTab({ model }: { model: ModelDetail }) {
         ))}
       </div>
 
-      {error && <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      <div className="mb-4">
+        <ErrorBanner message={error} />
+      </div>
 
-      <table className="w-full text-sm">
+      <Table>
         <thead>
           <tr className="border-b border-slate-200 text-left text-slate-500">
             <th className="py-2">Grantee</th>
@@ -127,14 +140,10 @@ export function SharingTab({ model }: { model: ModelDetail }) {
             </tr>
           ))}
           {grants?.length === 0 && (
-            <tr>
-              <td colSpan={7} className="py-4 text-center text-slate-400">
-                No {SCOPE_LABEL[scope].toLowerCase()} grants yet.
-              </td>
-            </tr>
+            <EmptyTableRow colSpan={7} message={`No ${SCOPE_LABEL[scope].toLowerCase()} grants yet.`} />
           )}
         </tbody>
-      </table>
+      </Table>
 
       <div className="mt-6 rounded-lg border border-slate-200 bg-white p-4">
         <h4 className="mb-3 text-sm font-medium">
@@ -189,13 +198,9 @@ export function SharingTab({ model }: { model: ModelDetail }) {
               {label}
             </label>
           ))}
-          <button
-            disabled={!granteeId || grantMutation.isPending}
-            onClick={() => grantMutation.mutate()}
-            className="rounded-md bg-brand-500 px-3 py-2 text-sm text-white disabled:opacity-50"
-          >
+          <Button disabled={!granteeId} isLoading={grantMutation.isPending} onClick={() => grantMutation.mutate()}>
             Grant
-          </button>
+          </Button>
         </div>
       </div>
     </div>

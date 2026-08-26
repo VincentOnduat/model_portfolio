@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { AllocationListStatus, AllocationListType, Permission, roleHasPermission } from '@model-portfolio/shared';
 import { requireAuth, requirePermission } from '../middleware/auth.js';
-import { asyncHandler } from '../middleware/errorHandler.js';
+import { ApiException, asyncHandler } from '../middleware/errorHandler.js';
 import * as AllocationService from '../services/allocationLists.service.js';
 
 /** Guide 4.2: Money Allocation / Rebalance main page and 3-step wizard. */
@@ -13,6 +13,8 @@ allocationListsRouter.use(requireAuth, requirePermission(Permission.ALLOCATION_A
 const listQuerySchema = z.object({
   type: z.nativeEnum(AllocationListType).optional(),
   status: z.nativeEnum(AllocationListStatus).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
 });
 
 allocationListsRouter.get(
@@ -46,8 +48,7 @@ allocationListsRouter.post(
         ? Permission.ALLOCATE_MONEY
         : Permission.REBALANCE;
     if (!req.user || !roleHasPermission(req.user.role, requiredPermission)) {
-      res.status(403).json({ error: 'FORBIDDEN', message: `Role lacks ${requiredPermission}.` });
-      return;
+      throw new ApiException(403, 'FORBIDDEN', `Role lacks ${requiredPermission}.`);
     }
     const list = await AllocationService.createAllocationList(req.user!, input);
     res.status(201).json(list);

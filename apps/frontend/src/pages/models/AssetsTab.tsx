@@ -2,10 +2,16 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { validateModelAllocation, type Asset, type ModelDetail } from '@model-portfolio/shared';
 import { api, ApiError } from '../../api/client';
+import { Button } from '../../components/ui/Button';
+import { EmptyTableRow } from '../../components/ui/EmptyState';
+import { ErrorBanner } from '../../components/ui/ErrorBanner';
+import { Table } from '../../components/ui/Table';
+import { useToast } from '../../components/ui/useToast';
 
 /** Guide 4.1.3 "Assets": Assets Available for the Model / Assets Allocated to this Model. */
 export function AssetsTab({ model }: { model: ModelDetail }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [search, setSearch] = useState('');
   const [selectedToAdd, setSelectedToAdd] = useState<Set<string>>(new Set());
   // Local, unsaved allocation edits keyed by assetId -> percent string.
@@ -28,7 +34,8 @@ export function AssetsTab({ model }: { model: ModelDetail }) {
       ];
       return api.put<ModelDetail>(`/models/${model.id}/allocation`, { entries });
     },
-    onSuccess: () => {
+    onSuccess: (_data, assetIds) => {
+      toast.success(`${assetIds.length} asset(s) added to the model.`);
       setSelectedToAdd(new Set());
       setDraftAllocations(null);
       invalidateModel();
@@ -40,6 +47,7 @@ export function AssetsTab({ model }: { model: ModelDetail }) {
     mutationFn: async (entries: { assetId: string; percentAllocated: number }[]) =>
       api.put<ModelDetail>(`/models/${model.id}/allocation`, { entries }),
     onSuccess: () => {
+      toast.success('Allocation updated.');
       setDraftAllocations(null);
       invalidateModel();
     },
@@ -53,13 +61,19 @@ export function AssetsTab({ model }: { model: ModelDetail }) {
         .map((a) => ({ assetId: a.assetId, percentAllocated: a.percentAllocated }));
       return api.put<ModelDetail>(`/models/${model.id}/allocation`, { entries });
     },
-    onSuccess: invalidateModel,
+    onSuccess: () => {
+      toast.success('Asset removed.');
+      invalidateModel();
+    },
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Failed to remove asset.'),
   });
 
   const publishMutation = useMutation({
     mutationFn: async () => api.post<ModelDetail>(`/models/${model.id}/publish`),
-    onSuccess: invalidateModel,
+    onSuccess: () => {
+      toast.success('Model published - now Live.');
+      invalidateModel();
+    },
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Failed to publish model.'),
   });
 
@@ -82,7 +96,7 @@ export function AssetsTab({ model }: { model: ModelDetail }) {
 
   return (
     <div className="space-y-8">
-      {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      <ErrorBanner message={error} />
 
       <section>
         <div className="mb-2 flex items-center justify-between">
@@ -90,11 +104,13 @@ export function AssetsTab({ model }: { model: ModelDetail }) {
           <div className="flex gap-2 text-sm">
             {draftAllocations ? (
               <>
-                <button onClick={resetAllocation} className="rounded-md border border-slate-300 px-3 py-1.5">
+                <Button variant="secondary" size="sm" onClick={resetAllocation}>
                   Reset Allocation
-                </button>
-                <button
-                  disabled={!validation.valid || setAllocationMutation.isPending}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={!validation.valid}
+                  isLoading={setAllocationMutation.isPending}
                   onClick={() =>
                     setAllocationMutation.mutate(
                       Object.entries(draftAllocations).map(([assetId, pct]) => ({
@@ -103,20 +119,19 @@ export function AssetsTab({ model }: { model: ModelDetail }) {
                       })),
                     )
                   }
-                  className="rounded-md bg-brand-500 px-3 py-1.5 text-white disabled:opacity-50"
                 >
                   Set Allocation Change
-                </button>
+                </Button>
               </>
             ) : (
-              <button onClick={startEditing} className="rounded-md border border-slate-300 px-3 py-1.5">
+              <Button variant="secondary" size="sm" onClick={startEditing}>
                 Edit Allocation
-              </button>
+              </Button>
             )}
           </div>
         </div>
 
-        <table className="w-full text-sm">
+        <Table>
           <thead>
             <tr className="border-b border-slate-200 text-left text-slate-500">
               <th className="py-2">Name</th>
@@ -164,20 +179,22 @@ export function AssetsTab({ model }: { model: ModelDetail }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
 
         <div className="mt-2 flex items-center justify-between text-sm">
           <span className={validation.valid ? 'text-green-600' : 'text-red-600'}>
             Total: {validation.total.toFixed(2)}% {validation.valid ? '✓' : '(must equal 100%)'}
           </span>
-          <button
-            disabled={!validation.valid || model.status === 'LIVE' || publishMutation.isPending}
+          <Button
+            variant="success"
+            size="sm"
+            disabled={!validation.valid || model.status === 'LIVE'}
+            isLoading={publishMutation.isPending}
             onClick={() => publishMutation.mutate()}
-            className="rounded-md bg-green-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
             title={model.status === 'LIVE' ? 'Model is already Live' : undefined}
           >
             {model.status === 'LIVE' ? 'Live' : 'Publish'}
-          </button>
+          </Button>
         </div>
       </section>
 
@@ -189,7 +206,7 @@ export function AssetsTab({ model }: { model: ModelDetail }) {
           placeholder="Search by name, ISIN or sector (3+ characters)..."
           className="mb-3 w-full max-w-sm rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
-        <table className="w-full text-sm">
+        <Table>
           <thead>
             <tr className="border-b border-slate-200 text-left text-slate-500">
               <th className="w-8 py-2"></th>
@@ -205,6 +222,7 @@ export function AssetsTab({ model }: { model: ModelDetail }) {
                 <td className="py-2">
                   <input
                     type="checkbox"
+                    aria-label={`Select ${a.name} to add to the model`}
                     checked={selectedToAdd.has(a.id)}
                     onChange={(e) =>
                       setSelectedToAdd((prev) => {
@@ -222,22 +240,18 @@ export function AssetsTab({ model }: { model: ModelDetail }) {
                 <td className="text-slate-500">{a.sector}</td>
               </tr>
             ))}
-            {availableAssets?.length === 0 && (
-              <tr>
-                <td colSpan={5} className="py-4 text-center text-slate-400">
-                  No matching assets.
-                </td>
-              </tr>
-            )}
+            {availableAssets?.length === 0 && <EmptyTableRow colSpan={5} message="No matching assets." />}
           </tbody>
-        </table>
-        <button
-          disabled={selectedToAdd.size === 0 || addAssetsMutation.isPending}
+        </Table>
+        <Button
+          size="sm"
+          disabled={selectedToAdd.size === 0}
+          isLoading={addAssetsMutation.isPending}
           onClick={() => addAssetsMutation.mutate([...selectedToAdd])}
-          className="mt-3 rounded-md bg-brand-500 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+          className="mt-3"
         >
           Add Selected Assets to Model
-        </button>
+        </Button>
       </section>
     </div>
   );

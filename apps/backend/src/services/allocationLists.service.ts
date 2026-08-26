@@ -67,29 +67,49 @@ export function serializeAllocationList(
   };
 }
 
+const DEFAULT_PAGE_SIZE = 25;
+const MAX_PAGE_SIZE = 100;
+
 export async function listAllocationLists(filters: {
   type?: AllocationListType;
   status?: AllocationListStatus;
+  page?: number;
+  pageSize?: number;
 }) {
-  const lists = await prisma.allocationList.findMany({
-    where: filters,
-    include: {
-      _count: { select: { accounts: true, exclusions: true, failures: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-  return lists.map((l) => ({
-    id: l.id,
-    reference: l.reference,
-    name: l.name,
-    type: l.type,
-    status: l.status,
-    createdByUserId: l.createdByUserId,
-    createdAt: l.createdAt.toISOString(),
-    accountCount: l._count.accounts,
-    hasExclusions: l._count.exclusions > 0,
-    hasFailures: l._count.failures > 0,
-  }));
+  const page = filters.page ?? 1;
+  const pageSize = Math.min(filters.pageSize ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+  const where = { type: filters.type, status: filters.status };
+
+  const [lists, total] = await Promise.all([
+    prisma.allocationList.findMany({
+      where,
+      include: {
+        _count: { select: { accounts: true, exclusions: true, failures: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.allocationList.count({ where }),
+  ]);
+
+  return {
+    items: lists.map((l) => ({
+      id: l.id,
+      reference: l.reference,
+      name: l.name,
+      type: l.type,
+      status: l.status,
+      createdByUserId: l.createdByUserId,
+      createdAt: l.createdAt.toISOString(),
+      accountCount: l._count.accounts,
+      hasExclusions: l._count.exclusions > 0,
+      hasFailures: l._count.failures > 0,
+    })),
+    total,
+    page,
+    pageSize,
+  };
 }
 
 export async function getAllocationListOrThrow(id: string) {
@@ -204,6 +224,26 @@ export async function generateOrders(user: AuthTokenPayload, listId: string) {
   const exclusionsToCreate: ExclusionDraft[] = [];
   const failuresToCreate: FailureDraft[] = [];
 
+  // Batch-fetch every distinct Model and every account's Holdings up front
+  // instead of per-account inside the loop below - the loop used to issue
+  // one Model query and one Holding query per account (an N+1 pattern),
+  // which serialises badly as a list's account count grows.
+  const modelIds = [...new Set(list.accounts.map((la) => la.modelId))];
+  const models = await prisma.model.findMany({
+    where: { id: { in: modelIds } },
+    include: { assets: { include: { asset: true } } },
+  });
+  const modelsById = new Map(models.map((m) => [m.id, m]));
+
+  const accountIds = list.accounts.map((la) => la.accountId);
+  const allHoldings = await prisma.holding.findMany({ where: { accountId: { in: accountIds } } });
+  const holdingsByAccountId = new Map<string, typeof allHoldings>();
+  for (const h of allHoldings) {
+    const bucket = holdingsByAccountId.get(h.accountId);
+    if (bucket) bucket.push(h);
+    else holdingsByAccountId.set(h.accountId, [h]);
+  }
+
   for (const listAccount of list.accounts) {
     // Re-check account-level eligibility at generation time - the account
     // could have been detached from its model, or had consent withdrawn,
@@ -225,10 +265,7 @@ export async function generateOrders(user: AuthTokenPayload, listId: string) {
       continue;
     }
 
-    const model = await prisma.model.findUnique({
-      where: { id: listAccount.modelId },
-      include: { assets: { include: { asset: true } } },
-    });
+    const model = modelsById.get(listAccount.modelId);
     if (!model) continue;
     const minTrade = Number(model.minimumTradeValue);
 
@@ -287,7 +324,7 @@ export async function generateOrders(user: AuthTokenPayload, listId: string) {
         });
       }
     } else {
-      const holdings = await prisma.holding.findMany({ where: { accountId: listAccount.accountId } });
+      const holdings = holdingsByAccountId.get(listAccount.accountId) ?? [];
       const result = calculateRebalance({
         minimumTradeValue: minTrade,
         holdings: [
@@ -316,6 +353,15 @@ export async function generateOrders(user: AuthTokenPayload, listId: string) {
             assetId: o.assetId,
             reason: 'RESTRICTED_ASSET_CANNOT_SELL',
             detail: `${asset.name} is restricted and cannot be sold.`,
+          });
+          continue;
+        }
+        if (o.side === 'BUY' && model.chargePercent == null) {
+          failuresToCreate.push({
+            accountId: listAccount.accountId,
+            assetId: o.assetId,
+            reason: 'CHARGES_NOT_SET_UP',
+            detail: `${model.name} has no charge percent configured, so purchases cannot be dealt.`,
           });
           continue;
         }
@@ -386,6 +432,32 @@ export async function confirmOrders(_user: AuthTokenPayload, listId: string) {
   const list = await getAllocationListOrThrow(listId);
   if (list.status !== AllocationListStatus.POTENTIAL_ORDERS_GENERATED) {
     throw new ApiException(409, 'INVALID_STATUS', 'Orders must be generated before they can be confirmed.');
+  }
+
+  // Guide 4.2.6: an account could have been detached from its model between
+  // Step 2 (Generate Orders) and Step 3 (Confirm) - exclude its order lines
+  // rather than confirm stale orders against a model it's no longer attached
+  // to, and record why.
+  const staleAccounts = list.accounts.filter((la) => la.account.linkedModelId !== la.modelId);
+  if (staleAccounts.length > 0) {
+    const staleAccountIds = new Set(staleAccounts.map((la) => la.accountId));
+    const staleOrderLineIds = list.orderLines
+      .filter((o) => staleAccountIds.has(o.accountId))
+      .map((o) => o.id);
+
+    await prisma.$transaction(async (tx) => {
+      if (staleOrderLineIds.length > 0) {
+        await tx.orderLine.deleteMany({ where: { id: { in: staleOrderLineIds } } });
+      }
+      await tx.failure.createMany({
+        data: staleAccounts.map((la) => ({
+          allocationListId: listId,
+          accountId: la.accountId,
+          reason: 'ACCOUNT_NO_LONGER_ATTACHED_TO_MODEL',
+          detail: `Account ${la.account.accountNumber} is no longer attached to this model and was excluded before confirmation.`,
+        })),
+      });
+    });
   }
 
   // A real system would hand orderLines off to a downstream dealing/trading
