@@ -1,16 +1,44 @@
-11# Model Portfolio
+# Model Portfolio
 
-A model-portfolio management platform: create investment models, allocate
-assets to a target percentage, attach client accounts, share models across
-firms/teams with fine-grained permissions, and generate Money Allocation /
-Rebalance buy-and-sell orders against those models.
+Model Portfolio is where an adviser firm builds an investment model once,
+shares it out under fine-grained permissions, and turns it into real
+buy/sell orders across every client account attached to it - without a
+spreadsheet in sight.
 
-This repo is a from-scratch scaffold built to the same domain shape as an
-internal *Model Portfolio User Guide* (advisers/DFMs managing models for
-their clients) - see [`docs/domain-model.md`](./docs/domain-model.md) for the
-detailed mapping from guide section to code, and
+It's built to the same domain shape as an internal *Model Portfolio User
+Guide* (advisers/DFMs managing models for their clients), and it doesn't stop
+at the CRUD shell around that domain: the Money Allocation / Rebalance
+workflow runs the guide's actual 11-step rebalancing algorithm, RBAC is
+enforced across six real user types with per-model sharing overrides, and
+order generation reports *why* an account or asset was excluded rather than
+failing silently. See [`docs/domain-model.md`](./docs/domain-model.md) for
+the detailed mapping from guide section to code, and
 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for how the pieces fit
 together.
+
+## Highlights
+
+- **A real rebalancing engine, not a stub.** `packages/shared/src/rebalance.ts`
+  implements the guide's full 11-step algorithm (de-minimis filtering, cash
+  raised from sells funding buys proportionally, missing-price handling) as a
+  pure, unit-tested function shared by both backend and frontend - not a
+  placeholder that always returns the same shape.
+- **Compliance-aware order generation.** Generating orders doesn't just
+  produce a buy/sell list - it produces a paper trail. Ineligible accounts,
+  untradeable or restricted assets, missing prices, and unconfigured charges
+  all surface as named Exclusion/Failure rows instead of silently vanishing
+  or throwing an opaque error.
+- **Sharing that models a real org chart.** Firm / Enterprise / Third-Party
+  sharing grants are enforced against an actual parent-firm hierarchy walk
+  and a signed-contract check, not just a flat permission flag.
+- **RBAC with per-model overrides.** Six user types (from platform admin down
+  to third-party standard) sit under a static permission ceiling, further
+  narrowed or widened per model by sharing grants - checked identically on
+  every route, not just hidden in the UI.
+- **Tested where it matters.** The calculation engines and the exclusion/
+  failure generation logic run against real test suites (unit tests for the
+  pure functions, integration tests against a real Postgres instance for the
+  service layer), wired into CI on every push.
 
 ## What's implemented
 
